@@ -1,0 +1,33 @@
+@Auth: Nicholas Gates
+
+Overview:
+The program generates a ©Pokémon styled map.
+
+the map includes:
+    Border of % with one exit per side (NESW)
+    Two intersecting paths #
+    2 tall grass regions :, clearing regions ., and 1 or more water regions ~
+    A 2x2 PC and 2x2 PM 
+
+to run with a fixed seed:
+./mapgen <seed>
+
+Program design at a high level:
+    1. initialize the map array
+    2. create the boarder
+    3. fill the interior
+    4. paint terrain blobs
+    5. carve paths
+    6. place the buildings
+    7. print the map
+
+Important functions:
+
+    void paint_blob(char terrain, int steps)
+        creats a region of terrain by doing a random walk
+
+    void carve_path(Point start, Point goal)
+        carves a path of # from start to goal using a randomized directed walk
+
+    void place_building_near_road(char b)
+        randomly picks a road tile, checks positions for a 2x2 spot, clears the cells in a ring, and places the building
