@@ -92,43 +92,123 @@ static void paint_blob(char terrain, int steps) {
   }
 }
 
-// Slightly wiggly directed path carving
+// helper
+static int sign(int v) { return (v > 0) - (v < 0); }
+
+/*
+ * Directed carve that always moves one step on the dominant axis toward goal,
+ * and has a small chance to wiggle on the secondary axis.
+ *
+ * wiggle_pct: total percent chance reserved for wiggle (e.g. 20 means 10% one way + 10% the other).
+ *             Use small values (0..30). 0 => perfectly Manhattan path.
+ */
 static void carve_path(Point start, Point goal) {
   int x = start.x, y = start.y;
 
+  /* prevent infinite loops if start==goal */
+  if (x == goal.x && y == goal.y) {
+    map[y][x] = '#';
+    return;
+  }
+
   while (x != goal.x || y != goal.y) {
+    /* paint current cell as road (don't overwrite exits check is optional) */
     map[y][x] = '#';
 
-    int dx = (goal.x > x) - (goal.x < x);
-    int dy = (goal.y > y) - (goal.y < y);
+    int dx = goal.x - x;
+    int dy = goal.y - y;
+    int adx = abs(dx);
+    int ady = abs(dy);
 
-    int nx = x, ny = y;
-    int r = rand() % 100;
+    int step_x = 0, step_y = 0;
 
-    // 75%: move toward goal
-    if (r < 75) {
-      if (dx != 0 && (dy == 0 || (rand() & 1))) nx += dx;
-      else if (dy != 0) ny += dy;
+    /* Primary: always move one step along the dominant axis toward the goal */
+    if (ady >= adx) {
+      step_y = sign(dy);
     } else {
-      // 25%: wiggle
-      if (rand() & 1) nx += (rand() & 1) ? 1 : -1;
-      else ny += (rand() & 1) ? 1 : -1;
+      step_x = sign(dx);
     }
 
-    // must stay in bounds
-    if (nx < 0 || nx >= MAP_W || ny < 0 || ny >= MAP_H) continue;
+    /* Secondary wiggle logic:
+     * We'll give wiggle_pct total chance. If primary is Y, wiggle affects X:
+     *   - wiggle_pct/2 : step_x = -1
+     *   - wiggle_pct/2 : step_x = +1
+     *
+     * If primary is X, wiggle affects Y similarly.
+     *
+     * Example: wiggle_pct = 20 -> 10% left, 10% right
+     */
+    const int wiggle_pct = 20; /* adjust to taste (20 == 10% left + 10% right) */
+    int r = rand() % 100;
+    if (r < wiggle_pct) {
+      int half = wiggle_pct / 2;
+      int w = (r < half) ? -1 : 1;
 
-    // don't create new holes in the border
-    // allow stepping on border only if it's the goal OR already '#'(an exit)
-    if (is_border(nx, ny) && !(nx == goal.x && ny == goal.y) && map[ny][nx] != '#')
-      continue;
+      if (step_y != 0) {     /* primary was Y -> wiggle X */
+        step_x += w;
+      } else {               /* primary was X -> wiggle Y */
+        step_y += w;
+      }
+    }
 
+    /* Candidate new position */
+    int nx = x + step_x;
+    int ny = y + step_y;
+
+    /* Validate candidate:
+     * - must be inside map bounds [0 .. MAP_W-1], [0 .. MAP_H-1]
+     * - must not create a new hole in the border (we only allow stepping on border if it's the goal
+     *   OR if the tile already contains '#' (an exit), matching your old guard)
+     *
+     * If the wiggle made the candidate invalid, revert to the primary-only step.
+     */
+    int candidate_ok = 1;
+    if (nx < 0 || nx >= MAP_W || ny < 0 || ny >= MAP_H) candidate_ok = 0;
+    else if (is_border(nx, ny) && !(nx == goal.x && ny == goal.y) && map[ny][nx] != '#')
+      candidate_ok = 0;
+
+    if (!candidate_ok) {
+      /* revert wiggle: recompute primary-only candidate */
+      step_x = 0; step_y = 0;
+      if (ady >= adx) step_y = sign(dy);
+      else step_x = sign(dx);
+
+      nx = x + step_x;
+      ny = y + step_y;
+
+      /* extra safety: if the primary-only candidate is somehow invalid (rare),
+         try to move only along whichever axis still differs and is valid */
+      if (nx < 0 || nx >= MAP_W || ny < 0 || ny >= MAP_H ||
+          (is_border(nx, ny) && !(nx == goal.x && ny == goal.y) && map[ny][nx] != '#')) {
+        /* attempt alternate single-axis moves (should avoid infinite loops) */
+        int tried = 0;
+        if (step_y != 0) {
+          /* try moving on x toward goal if possible */
+          int altx = x + sign(dx);
+          if (!(altx < 0 || altx >= MAP_W || (is_border(altx,y) && !(altx==goal.x && y==goal.y) && map[y][altx] != '#'))) {
+            nx = altx; ny = y; tried = 1;
+          }
+        } else if (step_x != 0) {
+          /* try moving on y toward goal if possible */
+          int alty = y + sign(dy);
+          if (!(alty < 0 || alty >= MAP_H || (is_border(x,alty) && !(x==goal.x && alty==goal.y) && map[alty][x] != '#'))) {
+            nx = x; ny = alty; tried = 1;
+          }
+        }
+        if (!tried) {
+          /* last resort: break to avoid infinite loop (shouldn't happen) */
+          break;
+        }
+      }
+    }
+
+    /* apply step */
     x = nx; y = ny;
   }
 
+  /* paint final goal cell as road */
   map[goal.y][goal.x] = '#';
 }
-
 
 static int can_place_building_2x2(int x, int y) {
   // x,y is top-left of 2x2 footprint
